@@ -5,6 +5,24 @@ set -o functrace
 PS4=' ${FUNCNAME[0]}: $LINENO: '
 SUDO=${SUDO:-sudo}
 
+function check_no_osd_down()
+{
+    ! ceph osd dump | grep ' down '
+}
+
+function wait_no_osd_down()
+{
+  for i in $(seq 1 300) ; do
+    if ! check_no_osd_down ; then
+      echo "waiting for osd(s) to come back up"
+      sleep 1
+    else
+      break
+    fi
+  done
+  check_no_osd_down
+}
+
 function get_pg()
 {
 	local pool obj map_output pg
@@ -89,6 +107,7 @@ function expect_config_value()
 
 function test_mon_injectargs_SI()
 {
+  check_no_osd_down
   # Test SI units during injectargs and 'config set'
   # We only aim at testing the units are parsed accordingly
   # and don't intend to test whether the options being set
@@ -117,6 +136,7 @@ function test_mon_injectargs_SI()
 
 function test_tiering()
 {
+  check_no_osd_down
   # tiering
   ceph osd pool create slow 2
   ceph osd pool create slow2 2
@@ -265,6 +285,7 @@ function test_tiering()
 
 function test_auth()
 {
+  check_no_osd_down
   ceph auth add client.xx mon allow osd "allow *"
   ceph auth export client.xx >client.xx.keyring
   ceph auth add client.xx -i client.xx.keyring
@@ -290,6 +311,7 @@ function test_auth()
 
 function test_mon_misc()
 {
+  check_no_osd_down
   # with and without verbosity
   ceph osd dump | grep '^epoch'
   ceph --concise osd dump | grep '^epoch'
@@ -341,6 +363,7 @@ function fail_all_mds()
 
 function test_mon_mds()
 {
+  check_no_osd_down
   existing_fs=$(ceph fs ls | grep "name:" | awk '{print substr($2,0,length($2)-1);}')
   num_mds=$(ceph mds stat | awk '{print $2;}' | cut -f1 -d'/')
   if [ -n "$existing_fs" ] ; then
@@ -456,6 +479,7 @@ function test_mon_mds()
 
 function test_mon_mon()
 {
+  check_no_osd_down
   # no mon add/remove
   ceph mon dump
   ceph mon getmap -o $TMPDIR/monmap.$$
@@ -466,6 +490,7 @@ function test_mon_mon()
 
 function test_mon_osd()
 {
+  check_no_osd_down
   #
   # osd blacklist
   #
@@ -526,17 +551,8 @@ function test_mon_osd()
 
   ceph osd thrash 10
   ceph osd down `seq 0 31`  # force everything down so that we can trust up
-  # make sure everything gets back up+in.
-  for ((i=0; i < 100; i++)); do
-    if ceph osd dump | grep ' down '; then
-      echo "waiting for osd(s) to come back up"
-      sleep 10
-    else
-      break
-    fi
-  done
-  ! ceph osd dump | grep ' down ' || exit 1
-  
+  wait_no_osd_down
+
   # if you have more osds than this you are on your own
   for f in `seq 0 31`; do
     ceph osd in $f || true
@@ -600,6 +616,7 @@ function test_mon_osd()
 
 function test_mon_osd_pool()
 {
+  check_no_osd_down
   #
   # osd pool
   #
@@ -626,6 +643,7 @@ function test_mon_osd_pool()
 
 function test_mon_osd_pool_quota()
 {
+  check_no_osd_down
   #
   # test osd pool set/get quota
   #
@@ -672,6 +690,7 @@ function test_mon_osd_pool_quota()
 
 function test_mon_pg()
 {
+  check_no_osd_down
   ceph pg debug unfound_objects_exist
   ceph pg debug degraded_pgs_exist
   ceph pg deep-scrub 0.0
@@ -743,6 +762,7 @@ function test_mon_pg()
 
 function test_mon_osd_pool_set()
 {
+  check_no_osd_down
   TEST_POOL_GETSET=pool_getset
   ceph osd pool create $TEST_POOL_GETSET 10
 
@@ -783,6 +803,7 @@ function test_mon_osd_pool_set()
 
 function test_mon_osd_tiered_pool_set()
 {
+  check_no_osd_down
   # this is really a tier pool
   ceph osd pool create real-tier 2
   ceph osd tier add rbd real-tier
@@ -868,6 +889,7 @@ function test_mon_osd_tiered_pool_set()
 
 function test_mon_osd_erasure_code()
 {
+  check_no_osd_down
 
   ceph osd erasure-code-profile set fooprofile a=b c=d
   ceph osd erasure-code-profile set fooprofile a=b c=d
@@ -882,6 +904,7 @@ function test_mon_osd_erasure_code()
 
 function test_mon_osd_misc()
 {
+  check_no_osd_down
   set +e
 
   # expect error about missing 'pool' argument
@@ -906,6 +929,7 @@ function test_mon_osd_misc()
 
 function test_mon_heap_profiler()
 {
+  check_no_osd_down
   do_test=1
   set +e
   # expect 'heap' commands to be correctly parsed
@@ -926,6 +950,7 @@ function test_mon_heap_profiler()
 
 function test_osd_bench()
 {
+  check_no_osd_down
   # test osd bench limits
   # As we should not rely on defaults (as they may change over time),
   # lets inject some values and perform some simple tests
@@ -1057,6 +1082,7 @@ if [[ ${#tests_to_run[@]} -eq 0 ]]; then
   tests_to_run=("${TESTS[@]}")
 fi
 
+wait_no_osd_down
 for i in ${tests_to_run[@]}; do
   set -x
   test_${i}
