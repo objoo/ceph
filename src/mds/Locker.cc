@@ -3253,6 +3253,10 @@ void Locker::get_late_revoking_clients(std::list<client_t> *result) const
   }
 }
 
+// Hard-code instead of surfacing a config settings because this is
+// really a hack that should go away at some point when we have better
+// inspection tools for getting at detailed cap state (#7316)
+#define MAX_WARN_CAPS 100
 
 void Locker::caps_tick()
 {
@@ -3260,6 +3264,7 @@ void Locker::caps_tick()
 
   dout(20) << __func__ << " " << revoking_caps.size() << " revoking caps" << dendl;
 
+  int i = 0;
   for (xlist<Capability*>::iterator p = revoking_caps.begin(); !p.end(); ++p) {
     Capability *cap = *p;
 
@@ -3268,6 +3273,13 @@ void Locker::caps_tick()
     if (age <= g_conf->mds_revoke_cap_timeout) {
       dout(20) << __func__ << " age below timeout " << g_conf->mds_revoke_cap_timeout << dendl;
       break;
+    } else {
+      ++i;
+      if (i > MAX_WARN_CAPS) {
+        dout(1) << __func__ << " more than " << MAX_WARN_CAPS << " caps are late"
+          << "revoking, ignoring subsequent caps" << dendl;
+        break;
+      }
     }
     // exponential backoff of warning intervals
     if (age > g_conf->mds_revoke_cap_timeout * (1 << cap->get_num_revoke_warnings())) {
