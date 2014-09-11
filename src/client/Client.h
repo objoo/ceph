@@ -394,7 +394,7 @@ protected:
   void touch_dn(Dentry *dn);
 
   // trim cache.
-  void trim_cache();
+  void trim_cache(unsigned max=-1U);
   void trim_dentry(Dentry *dn);
   void trim_caps(MetaSession *s, int max);
   

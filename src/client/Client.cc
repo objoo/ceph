@@ -476,14 +476,19 @@ void Client::shutdown()
 // ===================
 // metadata cache stuff
 
-void Client::trim_cache()
+void Client::trim_cache(unsigned max)
 {
-  ldout(cct, 20) << "trim_cache size " << lru.lru_get_size() << " max " << lru.lru_get_max() << dendl;
+  if (max > lru.lru_get_max())
+    max = lru.lru_get_max();
+
+  ldout(cct, 20) << "trim_cache size " << lru.lru_get_size() << " max " << max << dendl;
+
   unsigned last = 0;
   while (lru.lru_get_size() != last) {
     last = lru.lru_get_size();
 
-    if (lru.lru_get_size() <= lru.lru_get_max())  break;
+    if (lru.lru_get_size() <= max)
+      break;
 
     // trim!
     Dentry *dn = static_cast<Dentry*>(lru.lru_expire());
@@ -491,6 +496,22 @@ void Client::trim_cache()
       break;  // done
     
     trim_dentry(dn);
+  }
+
+  // notify kernel to invalidate top level directory entries. As a side effect,
+  // unused inodes underneath these entries get pruned.
+  if (dentry_invalidate_cb && lru.lru_get_size() > max) {
+    if (root->dir) {
+      for (ceph::unordered_map<string, Dentry*>::iterator p = root->dir->dentries.begin();
+	  p != root->dir->dentries.end();
+	  ++p) {
+	if (p->second->inode)
+	  _schedule_invalidate_dentry_callback(p->second, false);
+      }
+    } else {
+      // This seems unnatural, as long as we are holding caps they must be on
+      // some descendent of the root, so why don't we have the root open?`
+    }
   }
 
   // hose root?
@@ -2009,8 +2030,13 @@ void Client::handle_mds_map(MMDSMap* m)
     if (!mdsmap->is_up(p->first) ||
 	mdsmap->get_inst(p->first) != p->second->inst) {
       p->second->con->mark_down();
-      if (mdsmap->is_up(p->first))
+      if (mdsmap->is_up(p->first)) {
 	p->second->inst = mdsmap->get_inst(p->first);
+	// When new MDS starts to take over, notify kernel to trim unused entries
+	// in its dcache/icache. Hopefully, the kernel will release some unused
+	// inodes before the new MDS enters reconnect state.
+	trim_cache(1);
+      }
     } else if (oldstate == newstate)
       continue;  // no change
     
@@ -2047,6 +2073,14 @@ void Client::send_reconnect(MetaSession *session)
 {
   int mds = session->mds_num;
   ldout(cct, 10) << "send_reconnect to mds." << mds << dendl;
+
+  // trim unused caps to reduce MDS's cache rejoin time
+  trim_cache(1);
+
+  if (session->release) {
+    session->release->put();
+    session->release = NULL;
+  }
 
   MClientReconnect *m = new MClientReconnect;
 
