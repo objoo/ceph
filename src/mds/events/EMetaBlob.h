@@ -374,6 +374,27 @@ private:
   void add_truncate_finish(inodeno_t ino, uint64_t segoff) {
     truncate_finish[ino] = segoff;
   }
+  
+  /**
+   * If re-formatting an old journal that used absolute log position
+   * references as segment sequence numbers, use this function to update
+   * it.
+   *
+   * @param old_to_new
+   * Map of old journal segment segment sequence numbers to new journal segment sequence numbers
+   */
+  void rewrite_truncate_finish(std::map<uint64_t, uint64_t> const &old_to_new) {
+    map<inodeno_t, uint64_t> new_trunc_finish;
+    for (std::map<inodeno_t, uint64_t>::iterator i = truncate_finish.begin();
+        i != truncate_finish.end(); ++i) {
+      if (old_to_new.count(i->second)) {
+        new_trunc_finish[i->first] = old_to_new.find(i->second)->second;
+      } else {
+        new_trunc_finish[i->first] = i->second;
+      }
+    }
+    truncate_finish = new_trunc_finish;
+  }
 
   void add_destroyed_inode(inodeno_t ino) {
     destroyed_inodes.push_back(ino);
